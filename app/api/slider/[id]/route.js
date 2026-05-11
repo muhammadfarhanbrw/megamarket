@@ -1,7 +1,7 @@
 // app/api/slider/[id]/route.js
 import { NextResponse } from 'next/server';
-import connectToDatabase from '@/lib/mongodb';
-import Slider from '@/models/Slider';
+import connectToDatabase from '../../../lib/mongodb';
+import Slider from '../../../models/Slider';
 
 // PUT - Update slider
 export async function PUT(request, { params }) {
