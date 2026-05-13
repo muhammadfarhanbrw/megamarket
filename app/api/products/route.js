@@ -4,33 +4,54 @@ import connectToDatabase from "../../lib/mongodb";
 import Product from "../../models/Product";
 import FactoryRate from "../../models/FactoryRate";
 
-// ONLY THIS FUNCTION CHANGED - Now saves as Base64 (same as deals)
+// FIXED: saveImage function that actually works
 const saveImage = async (image) => {
-  if (!image || image.size === 0) return '';
+  // Check if image exists
+  if (!image) {
+    console.log('❌ No image provided');
+    return '';
+  }
+  
+  // Check if it's a File object (has size property)
+  if (typeof image === 'object' && image.size === 0) {
+    console.log('❌ Image has zero size');
+    return '';
+  }
+  
+  // Check if it's a string (existing image URL)
+  if (typeof image === 'string') {
+    console.log('📷 Image is string URL, keeping as is');
+    return image;
+  }
   
   try {
-    // Convert to Base64 - same as your working deals route
+    console.log('📷 Processing image:', {
+      name: image.name,
+      size: image.size,
+      type: image.type
+    });
+    
+    // Read the file as ArrayBuffer
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const base64 = buffer.toString('base64');
     const mimeType = image.type || 'image/jpeg';
+    const dataUrl = `data:${mimeType};base64,${base64}`;
     
-    // Return data URL for MongoDB storage
-    return `data:${mimeType};base64,${base64}`;
+    console.log(`✅ Image converted to Base64, length: ${dataUrl.length}`);
+    return dataUrl;
     
   } catch (error) {
-    console.error('Error converting image:', error);
+    console.error('❌ Error saving image:', error);
     return '';
   }
 };
-
-// EVERYTHING BELOW THIS LINE IS YOUR ORIGINAL CODE - NOT CHANGED
 
 // Helper function to sync product to factory rates WITH IMAGE
 const syncToFactoryRates = async (product) => {
   try {
     console.log(`🔄 Syncing product to factory rates: ${product.name}`);
-    console.log(`   - Image URL: ${product.image || 'NO IMAGE'}`);
+    console.log(`   - Image URL: ${product.image ? 'Yes (Base64)' : 'NO IMAGE'}`);
     console.log(`   - Factory Price: ${product.factoryPrice}`);
     console.log(`   - Selling Price: ${product.price}`);
     
@@ -52,10 +73,10 @@ const syncToFactoryRates = async (product) => {
       existingRate.sellingPrice = product.price;
       existingRate.category = product.categories;
       existingRate.supplier = product.sellerId || 'Admin';
-      existingRate.imageUrl = imageUrl; // KEY FIX: Add image URL
+      existingRate.imageUrl = imageUrl;
       existingRate.updatedAt = new Date();
       await existingRate.save();
-      console.log(`✅ UPDATED factory rate for ${product.name} with image: ${imageUrl || 'none'}`);
+      console.log(`✅ UPDATED factory rate for ${product.name}`);
     } else {
       // Create new factory rate - INCLUDES IMAGE
       const newRate = await FactoryRate.create({
@@ -65,35 +86,33 @@ const syncToFactoryRates = async (product) => {
         sellingPrice: product.price,
         minOrderQuantity: 1,
         supplier: product.sellerId || 'Admin',
-        imageUrl: imageUrl, // KEY FIX: Add image URL
+        imageUrl: imageUrl,
         createdAt: new Date(),
         updatedAt: new Date()
       });
-      console.log(`✅ CREATED factory rate for ${product.name} with image: ${imageUrl || 'none'}`);
+      console.log(`✅ CREATED factory rate for ${product.name}`);
     }
     
     // Verify the image was saved
     const verifyRate = await FactoryRate.findOne({ productName: product.name });
-    console.log(`🔍 Verification - ${product.name}: imageUrl = "${verifyRate?.imageUrl}"`);
+    console.log(`🔍 Verification - ${product.name}: imageUrl = ${verifyRate?.imageUrl ? 'Yes' : 'No'}`);
     
   } catch (error) {
     console.error('Error syncing to factory rates:', error);
   }
 };
 
-// UPDATED: Helper function to remove from factory rates - more robust
+// Helper function to remove from factory rates
 const removeFromFactoryRates = async (productName, productId) => {
   try {
     let deleted = false;
     
-    // Method 1: Delete by productName (exact match)
     const resultByName = await FactoryRate.deleteOne({ productName: productName });
     if (resultByName.deletedCount > 0) {
       console.log(`✅ Removed factory rate by product name: ${productName}`);
       deleted = true;
     }
     
-    // Method 2: Delete by productId if you have that field in your FactoryRate model
     if (productId) {
       const resultByProductId = await FactoryRate.deleteOne({ productId: productId });
       if (resultByProductId.deletedCount > 0) {
@@ -102,7 +121,6 @@ const removeFromFactoryRates = async (productName, productId) => {
       }
     }
     
-    // Method 3: Delete by case-insensitive name match
     const resultCaseInsensitive = await FactoryRate.deleteOne({ 
       productName: { $regex: new RegExp(`^${productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } 
     });
@@ -133,7 +151,6 @@ export async function GET(request) {
     const source = searchParams.get('source');
     const id = searchParams.get('id');
     
-    // If getting single product by ID
     if (id) {
       const product = await Product.findById(id);
       if (!product) {
@@ -148,17 +165,10 @@ export async function GET(request) {
       );
     }
     
-    // Build filter for multiple products
     let filter = {};
-    if (category) {
-      filter.categories = category;
-    }
-    if (status) {
-      filter.status = status;
-    }
-    if (source) {
-      filter.source = source;
-    }
+    if (category) filter.categories = category;
+    if (status) filter.status = status;
+    if (source) filter.source = source;
     
     const products = await Product.find(filter).sort({ createdAt: -1 });
     const categories = await Product.distinct('categories');
@@ -197,7 +207,17 @@ export async function POST(request) {
     const image = formData.get('image');
     const source = formData.get('source');
     
-    console.log("📦 Creating product:", { name, sellerId, price, factoryPrice, categories, source });
+    console.log("📦 Creating product:", { 
+      name, 
+      sellerId, 
+      price, 
+      factoryPrice, 
+      categories, 
+      source,
+      hasImage: !!image,
+      imageType: image ? typeof image : 'none',
+      imageSize: image && image.size ? image.size : 0
+    });
     
     if (!name || !sellerId || !description || !price || !categories) {
       return NextResponse.json(
@@ -206,19 +226,23 @@ export async function POST(request) {
       );
     }
     
-    // Save image FIRST - NOW USES BASE64
+    // Save image to Base64
     let imageUrl = '';
     if (image && image.size > 0) {
       imageUrl = await saveImage(image);
-      console.log(`🖼️ Image saved as Base64`);
+      console.log(`🖼️ Image saved, length: ${imageUrl.length}`);
     } else {
       console.log(`⚠️ No image uploaded for product: ${name}`);
+      return NextResponse.json(
+        { error: 'Product image is required' },
+        { status: 400 }
+      );
     }
     
     const productStatus = source === 'admin' ? 'approved' : 'pending';
     const productSource = source || 'seller';
     
-    // Create product WITH the image URL
+    // Create product
     const product = await Product.create({
       name: name.trim(),
       sellerId: sellerId.trim(),
@@ -226,16 +250,16 @@ export async function POST(request) {
       price: Number(price),
       factoryPrice: factoryPrice ? Number(factoryPrice) : 0,
       categories: categories.trim(),
-      image: imageUrl, // This is now Base64
+      image: imageUrl,
       status: productStatus,
       source: productSource,
       createdAt: new Date(),
       updatedAt: new Date()
     });
     
-    console.log(`✅ Product created: ${product.name} with image: ${product.image ? 'Yes (Base64)' : 'No'}`);
+    console.log(`✅ Product created: ${product.name}`);
     
-    // Sync to factory rates (this will now include the image)
+    // Sync to factory rates
     if (source === 'admin' || (factoryPrice && Number(factoryPrice) > 0)) {
       await syncToFactoryRates(product);
     }
@@ -269,8 +293,6 @@ export async function PUT(request, { params }) {
     
     const { id } = await params;
     
-    console.log("Updating product with ID:", id);
-    
     if (!id) {
       return NextResponse.json(
         { error: 'Product ID is required' },
@@ -278,53 +300,30 @@ export async function PUT(request, { params }) {
       );
     }
     
-    // Check if product exists
     const existingProduct = await Product.findById(id);
     if (!existingProduct) {
-      console.log("Product not found with ID:", id);
       return NextResponse.json(
         { error: 'Product not found' },
         { status: 404 }
       );
     }
     
-    // Check if this is a JSON request (status update from admin)
     const contentType = request.headers.get('content-type') || '';
     
     if (contentType.includes('application/json')) {
-      // This is a status update request from admin
       const body = await request.json();
-      
       const updateData = {
         status: body.status,
         adminNotes: body.adminNotes || existingProduct.adminNotes,
         updatedAt: new Date()
       };
-      
-      const updatedProduct = await Product.findByIdAndUpdate(
-        id,
-        updateData,
-        { new: true, runValidators: true }
-      );
-      
-      console.log(`Product status updated to ${body.status}:`, updatedProduct.name);
-      
-      // If approved, sync to factory rates
+      const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true });
       if (body.status === 'approved') {
         await syncToFactoryRates(updatedProduct);
       }
-      
-      return NextResponse.json(
-        { 
-          success: true, 
-          message: `Product ${body.status === 'approved' ? 'approved' : 'rejected'} successfully`,
-          product: updatedProduct
-        },
-        { status: 200 }
-      );
+      return NextResponse.json({ success: true, product: updatedProduct });
     }
     
-    // Get form data for regular product update
     const formData = await request.formData();
     const name = formData.get('name');
     const sellerId = formData.get('sellerId');
@@ -334,7 +333,6 @@ export async function PUT(request, { params }) {
     const categories = formData.get('categories');
     const image = formData.get('image');
     
-    // Prepare update data
     const updateData = {
       name: name?.trim(),
       sellerId: sellerId?.trim(),
@@ -342,44 +340,26 @@ export async function PUT(request, { params }) {
       price: price ? Number(price) : existingProduct.price,
       factoryPrice: factoryPrice ? Number(factoryPrice) : existingProduct.factoryPrice || 0,
       categories: categories?.trim() || existingProduct.categories,
-      status: 'pending', // Reset to pending when edited
-      adminNotes: '', // Clear rejection notes when resubmitted
+      status: 'pending',
+      adminNotes: '',
       updatedAt: new Date()
     };
     
-    // Handle image update if new image provided
     if (image && image.size > 0) {
-      // Save new image as Base64
       const imageUrl = await saveImage(image);
       if (imageUrl) {
         updateData.image = imageUrl;
-        console.log(`New image saved as Base64 for product: ${name}`);
+        console.log(`New image saved for product: ${name}`);
       }
     } else {
-      // Keep existing image
       updateData.image = existingProduct.image;
     }
     
-    // Update the product
-    const updatedProduct = await Product.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    );
-    
-    console.log(`Product updated: ${updatedProduct.name} with image: ${updatedProduct.image ? 'Yes (Base64)' : 'No'}`);
-    
-    // Sync to factory rates
+    const updatedProduct = await Product.findByIdAndUpdate(id, updateData, { new: true });
     await syncToFactoryRates(updatedProduct);
     
-    return NextResponse.json(
-      { 
-        success: true, 
-        message: 'Product updated and submitted for admin approval. Factory rate synced.',
-        product: updatedProduct
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({ success: true, product: updatedProduct });
+    
   } catch (error) {
     console.error('Error updating product:', error);
     return NextResponse.json(
@@ -389,14 +369,12 @@ export async function PUT(request, { params }) {
   }
 }
 
-// DELETE product by ID - Now properly removes factory rates
+// DELETE product by ID
 export async function DELETE(request, { params }) {
   try {
     await connectToDatabase();
     
     const { id } = await params;
-    
-    console.log("🗑️ Deleting product with ID:", id);
     
     if (!id) {
       return NextResponse.json(
@@ -405,9 +383,7 @@ export async function DELETE(request, { params }) {
       );
     }
     
-    // First, get the product to know its name and ID
     const deletedProduct = await Product.findByIdAndDelete(id);
-    
     if (!deletedProduct) {
       return NextResponse.json(
         { error: 'Product not found' },
@@ -415,25 +391,10 @@ export async function DELETE(request, { params }) {
       );
     }
     
-    console.log(`📦 Product deleted: ${deletedProduct.name}`);
-    console.log(`   - Product ID: ${deletedProduct._id}`);
-    console.log(`   - Factory Price: ${deletedProduct.factoryPrice}`);
-    
-    // REMOVE FROM FACTORY RATES - Using the improved function
     await removeFromFactoryRates(deletedProduct.name, deletedProduct._id.toString());
     
-    // Note: No need to delete image files since they are now stored in MongoDB as Base64
+    return NextResponse.json({ success: true, product: deletedProduct });
     
-    console.log(`✅ Product and associated factory rate deleted successfully: ${deletedProduct.name}`);
-    
-    return NextResponse.json(
-      { 
-        success: true, 
-        message: 'Product and associated factory rate deleted successfully',
-        product: deletedProduct
-      },
-      { status: 200 }
-    );
   } catch (error) {
     console.error('Error deleting product:', error);
     return NextResponse.json(
