@@ -5,44 +5,38 @@ import Product from "../../models/Product";
 import FactoryRate from "../../models/FactoryRate";
 
 // FIXED: saveImage function that actually works
+// REPLACE your entire saveImage function with this one
 const saveImage = async (image) => {
-  // Check if image exists
+  // If no image provided
   if (!image) {
     console.log('❌ No image provided');
     return '';
   }
   
-  // Check if it's a File object (has size property)
-  if (typeof image === 'object' && image.size === 0) {
-    console.log('❌ Image has zero size');
-    return '';
-  }
-  
-  // Check if it's a string (existing image URL)
+  // If image is already a string (URL or existing Base64)
   if (typeof image === 'string') {
-    console.log('📷 Image is string URL, keeping as is');
+    console.log('📷 Image is already a string');
     return image;
   }
   
+  // Convert file to Base64 (NOT saving to filesystem)
   try {
-    console.log('📷 Processing image:', {
-      name: image.name,
-      size: image.size,
-      type: image.type
-    });
+    console.log('📷 Converting image to Base64:', image.name, image.size, 'bytes');
     
     // Read the file as ArrayBuffer
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const base64 = buffer.toString('base64');
     const mimeType = image.type || 'image/jpeg';
-    const dataUrl = `data:${mimeType};base64,${base64}`;
     
+    // Return as data URL - this gets stored in MongoDB, NOT on filesystem
+    const dataUrl = `data:${mimeType};base64,${base64}`;
     console.log(`✅ Image converted to Base64, length: ${dataUrl.length}`);
+    
     return dataUrl;
     
   } catch (error) {
-    console.error('❌ Error saving image:', error);
+    console.error('❌ Error converting image:', error);
     return '';
   }
 };
