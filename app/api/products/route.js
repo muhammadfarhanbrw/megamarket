@@ -1,43 +1,30 @@
-
 // app/api/products/route.js
 import { NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import path from 'path';
-import fs from 'fs';
 import connectToDatabase from "../../lib/mongodb";
 import Product from "../../models/Product";
 import FactoryRate from "../../models/FactoryRate";
 
-// Helper function to save image
+// FIXED: Save image as Base64 (same as deals route - works on Vercel)
 const saveImage = async (image) => {
   if (!image || image.size === 0) return '';
   
   try {
-    const imagesDir = path.join(process.cwd(), 'public', 'images');
-    await mkdir(imagesDir, { recursive: true });
-    
-    const timestamp = Date.now();
-    const randomString = Math.random().toString(36).substring(7);
-    const fileExtension = path.extname(image.name) || '.jpg';
-    const newFileName = `product_${timestamp}_${randomString}${fileExtension}`;
-    const filePath = path.join(imagesDir, newFileName);
-    
+    // Convert image to Base64 (same as deals route)
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    await writeFile(filePath, buffer);
+    const base64 = buffer.toString('base64');
+    const mimeType = image.type || 'image/jpeg';
     
-    if (fs.existsSync(filePath)) {
-      return `/images/${newFileName}`;
-    } else {
-      throw new Error('Failed to save image file');
-    }
+    // Return data URL that can be stored in MongoDB
+    return `data:${mimeType};base64,${base64}`;
+    
   } catch (error) {
-    console.error('Error saving image:', error);
+    console.error('Error converting image to Base64:', error);
     return '';
   }
 };
 
-// CRITICAL FIX: Helper function to sync product to factory rates WITH IMAGE
+// Helper function to sync product to factory rates WITH IMAGE
 const syncToFactoryRates = async (product) => {
   try {
     console.log(`🔄 Syncing product to factory rates: ${product.name}`);
@@ -66,7 +53,7 @@ const syncToFactoryRates = async (product) => {
       existingRate.imageUrl = imageUrl; // KEY FIX: Add image URL
       existingRate.updatedAt = new Date();
       await existingRate.save();
-      console.log(`✅ UPDATED factory rate for ${product.name} with image: ${imageUrl || 'none'}`);
+      console.log(`✅ UPDATED factory rate for ${product.name} with image: ${imageUrl ? 'Yes' : 'No'}`);
     } else {
       // Create new factory rate - INCLUDES IMAGE
       const newRate = await FactoryRate.create({
@@ -80,19 +67,19 @@ const syncToFactoryRates = async (product) => {
         createdAt: new Date(),
         updatedAt: new Date()
       });
-      console.log(`✅ CREATED factory rate for ${product.name} with image: ${imageUrl || 'none'}`);
+      console.log(`✅ CREATED factory rate for ${product.name} with image: ${imageUrl ? 'Yes' : 'No'}`);
     }
     
     // Verify the image was saved
     const verifyRate = await FactoryRate.findOne({ productName: product.name });
-    console.log(`🔍 Verification - ${product.name}: imageUrl = "${verifyRate?.imageUrl}"`);
+    console.log(`🔍 Verification - ${product.name}: imageUrl = "${verifyRate?.imageUrl ? 'Yes' : 'No'}"`);
     
   } catch (error) {
     console.error('Error syncing to factory rates:', error);
   }
 };
 
-// UPDATED: Helper function to remove from factory rates - more robust
+// Helper function to remove from factory rates - more robust
 const removeFromFactoryRates = async (productName, productId) => {
   try {
     let deleted = false;
@@ -217,11 +204,11 @@ export async function POST(request) {
       );
     }
     
-    // Save image FIRST
+    // Save image as Base64 (FIXED)
     let imageUrl = '';
     if (image && image.size > 0) {
       imageUrl = await saveImage(image);
-      console.log(`🖼️ Image saved at: ${imageUrl}`);
+      console.log(`🖼️ Image converted to Base64, length: ${imageUrl.length}`);
     } else {
       console.log(`⚠️ No image uploaded for product: ${name}`);
     }
@@ -229,7 +216,7 @@ export async function POST(request) {
     const productStatus = source === 'admin' ? 'approved' : 'pending';
     const productSource = source || 'seller';
     
-    // Create product WITH the image URL
+    // Create product WITH the image as Base64
     const product = await Product.create({
       name: name.trim(),
       sellerId: sellerId.trim(),
@@ -237,14 +224,14 @@ export async function POST(request) {
       price: Number(price),
       factoryPrice: factoryPrice ? Number(factoryPrice) : 0,
       categories: categories.trim(),
-      image: imageUrl, // This is the key!
+      image: imageUrl,
       status: productStatus,
       source: productSource,
       createdAt: new Date(),
       updatedAt: new Date()
     });
     
-    console.log(`✅ Product created: ${product.name} with image: ${product.image || 'none'}`);
+    console.log(`✅ Product created: ${product.name} with image: ${product.image ? 'Yes' : 'No'}`);
     
     // Sync to factory rates (this will now include the image)
     if (source === 'admin' || (factoryPrice && Number(factoryPrice) > 0)) {
@@ -358,26 +345,13 @@ export async function PUT(request, { params }) {
       updatedAt: new Date()
     };
     
-    // Handle image update if new image provided
+    // Handle image update if new image provided (using Base64)
     if (image && image.size > 0) {
-      // Delete old image
-      if (existingProduct.image && existingProduct.image !== 'pending') {
-        const oldImagePath = path.join(process.cwd(), 'public', existingProduct.image);
-        try {
-          if (fs.existsSync(oldImagePath)) {
-            await fs.promises.unlink(oldImagePath);
-            console.log(`Deleted old image: ${existingProduct.image}`);
-          }
-        } catch (err) {
-          console.error('Error deleting old image:', err);
-        }
-      }
-      
-      // Save new image
+      // Save new image as Base64
       const imageUrl = await saveImage(image);
       if (imageUrl) {
         updateData.image = imageUrl;
-        console.log(`New image saved: ${imageUrl}`);
+        console.log(`New image converted to Base64 for product: ${name}`);
       }
     } else {
       // Keep existing image
@@ -391,7 +365,7 @@ export async function PUT(request, { params }) {
       { new: true, runValidators: true }
     );
     
-    console.log(`Product updated: ${updatedProduct.name} with image: ${updatedProduct.image || 'none'}`);
+    console.log(`Product updated: ${updatedProduct.name} with image: ${updatedProduct.image ? 'Yes' : 'No'}`);
     
     // Sync to factory rates
     await syncToFactoryRates(updatedProduct);
@@ -413,7 +387,7 @@ export async function PUT(request, { params }) {
   }
 }
 
-// UPDATED DELETE product by ID - Now properly removes factory rates
+// DELETE product by ID - Now properly removes factory rates
 export async function DELETE(request, { params }) {
   try {
     await connectToDatabase();
@@ -446,18 +420,7 @@ export async function DELETE(request, { params }) {
     // REMOVE FROM FACTORY RATES - Using the improved function
     await removeFromFactoryRates(deletedProduct.name, deletedProduct._id.toString());
     
-    // Delete image file if it exists
-    if (deletedProduct.image && deletedProduct.image !== 'pending') {
-      const imagePath = path.join(process.cwd(), 'public', deletedProduct.image);
-      try {
-        if (fs.existsSync(imagePath)) {
-          await fs.promises.unlink(imagePath);
-          console.log(`🗑️ Deleted image: ${deletedProduct.image}`);
-        }
-      } catch (fileError) {
-        console.error('Error deleting image:', fileError);
-      }
-    }
+    // Note: No need to delete image files anymore since they are stored in MongoDB as Base64
     
     console.log(`✅ Product and associated factory rate deleted successfully: ${deletedProduct.name}`);
     
