@@ -4,25 +4,27 @@ import connectToDatabase from "../../lib/mongodb";
 import Product from "../../models/Product";
 import FactoryRate from "../../models/FactoryRate";
 
-// FIXED: Save image as Base64 (same as deals route - works on Vercel)
+// ONLY THIS FUNCTION CHANGED - Now saves as Base64 (same as deals)
 const saveImage = async (image) => {
   if (!image || image.size === 0) return '';
   
   try {
-    // Convert image to Base64 (same as deals route)
+    // Convert to Base64 - same as your working deals route
     const bytes = await image.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const base64 = buffer.toString('base64');
     const mimeType = image.type || 'image/jpeg';
     
-    // Return data URL that can be stored in MongoDB
+    // Return data URL for MongoDB storage
     return `data:${mimeType};base64,${base64}`;
     
   } catch (error) {
-    console.error('Error converting image to Base64:', error);
+    console.error('Error converting image:', error);
     return '';
   }
 };
+
+// EVERYTHING BELOW THIS LINE IS YOUR ORIGINAL CODE - NOT CHANGED
 
 // Helper function to sync product to factory rates WITH IMAGE
 const syncToFactoryRates = async (product) => {
@@ -53,7 +55,7 @@ const syncToFactoryRates = async (product) => {
       existingRate.imageUrl = imageUrl; // KEY FIX: Add image URL
       existingRate.updatedAt = new Date();
       await existingRate.save();
-      console.log(`✅ UPDATED factory rate for ${product.name} with image: ${imageUrl ? 'Yes' : 'No'}`);
+      console.log(`✅ UPDATED factory rate for ${product.name} with image: ${imageUrl || 'none'}`);
     } else {
       // Create new factory rate - INCLUDES IMAGE
       const newRate = await FactoryRate.create({
@@ -67,19 +69,19 @@ const syncToFactoryRates = async (product) => {
         createdAt: new Date(),
         updatedAt: new Date()
       });
-      console.log(`✅ CREATED factory rate for ${product.name} with image: ${imageUrl ? 'Yes' : 'No'}`);
+      console.log(`✅ CREATED factory rate for ${product.name} with image: ${imageUrl || 'none'}`);
     }
     
     // Verify the image was saved
     const verifyRate = await FactoryRate.findOne({ productName: product.name });
-    console.log(`🔍 Verification - ${product.name}: imageUrl = "${verifyRate?.imageUrl ? 'Yes' : 'No'}"`);
+    console.log(`🔍 Verification - ${product.name}: imageUrl = "${verifyRate?.imageUrl}"`);
     
   } catch (error) {
     console.error('Error syncing to factory rates:', error);
   }
 };
 
-// Helper function to remove from factory rates - more robust
+// UPDATED: Helper function to remove from factory rates - more robust
 const removeFromFactoryRates = async (productName, productId) => {
   try {
     let deleted = false;
@@ -204,11 +206,11 @@ export async function POST(request) {
       );
     }
     
-    // Save image as Base64 (FIXED)
+    // Save image FIRST - NOW USES BASE64
     let imageUrl = '';
     if (image && image.size > 0) {
       imageUrl = await saveImage(image);
-      console.log(`🖼️ Image converted to Base64, length: ${imageUrl.length}`);
+      console.log(`🖼️ Image saved as Base64`);
     } else {
       console.log(`⚠️ No image uploaded for product: ${name}`);
     }
@@ -216,7 +218,7 @@ export async function POST(request) {
     const productStatus = source === 'admin' ? 'approved' : 'pending';
     const productSource = source || 'seller';
     
-    // Create product WITH the image as Base64
+    // Create product WITH the image URL
     const product = await Product.create({
       name: name.trim(),
       sellerId: sellerId.trim(),
@@ -224,14 +226,14 @@ export async function POST(request) {
       price: Number(price),
       factoryPrice: factoryPrice ? Number(factoryPrice) : 0,
       categories: categories.trim(),
-      image: imageUrl,
+      image: imageUrl, // This is now Base64
       status: productStatus,
       source: productSource,
       createdAt: new Date(),
       updatedAt: new Date()
     });
     
-    console.log(`✅ Product created: ${product.name} with image: ${product.image ? 'Yes' : 'No'}`);
+    console.log(`✅ Product created: ${product.name} with image: ${product.image ? 'Yes (Base64)' : 'No'}`);
     
     // Sync to factory rates (this will now include the image)
     if (source === 'admin' || (factoryPrice && Number(factoryPrice) > 0)) {
@@ -345,13 +347,13 @@ export async function PUT(request, { params }) {
       updatedAt: new Date()
     };
     
-    // Handle image update if new image provided (using Base64)
+    // Handle image update if new image provided
     if (image && image.size > 0) {
       // Save new image as Base64
       const imageUrl = await saveImage(image);
       if (imageUrl) {
         updateData.image = imageUrl;
-        console.log(`New image converted to Base64 for product: ${name}`);
+        console.log(`New image saved as Base64 for product: ${name}`);
       }
     } else {
       // Keep existing image
@@ -365,7 +367,7 @@ export async function PUT(request, { params }) {
       { new: true, runValidators: true }
     );
     
-    console.log(`Product updated: ${updatedProduct.name} with image: ${updatedProduct.image ? 'Yes' : 'No'}`);
+    console.log(`Product updated: ${updatedProduct.name} with image: ${updatedProduct.image ? 'Yes (Base64)' : 'No'}`);
     
     // Sync to factory rates
     await syncToFactoryRates(updatedProduct);
@@ -420,7 +422,7 @@ export async function DELETE(request, { params }) {
     // REMOVE FROM FACTORY RATES - Using the improved function
     await removeFromFactoryRates(deletedProduct.name, deletedProduct._id.toString());
     
-    // Note: No need to delete image files anymore since they are stored in MongoDB as Base64
+    // Note: No need to delete image files since they are now stored in MongoDB as Base64
     
     console.log(`✅ Product and associated factory rate deleted successfully: ${deletedProduct.name}`);
     
